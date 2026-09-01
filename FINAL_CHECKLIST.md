@@ -63,7 +63,7 @@ Pre-submission / pre-deployment verification record for DisclosurePriorityGate.
 
 ## Repo / deployment
 
-- [ ] Git repository initialized, sole-author commit history confirmed (`git log --format='%an <%ae>'` -> `Fortunex9 <fortuneemx@gmail.com>`, no Claude co-author trailer)
-- [ ] Pushed to `https://github.com/Fortune9thx/disclosure-priority-gate`
-- [ ] Deployed to GenLayer Bradbury testnet -- address and deploy tx to be recorded here, in README.md, docs/DESIGN.md, and PORTAL_SUBMISSION.md
-- [ ] A real, live, end-to-end transaction sequence (register program -> submit two reports -> challenge -> evaluate) run against Bradbury, not just a bare deploy
+- [x] Git repository initialized, sole-author commit history confirmed (`git log --format='%an <%ae>'` -> `Fortunex9 <fortuneemx@gmail.com>`, no Claude co-author trailer)
+- [x] Pushed to `https://github.com/Fortune9thx/disclosure-priority-gate`
+- [x] Deployed to GenLayer Bradbury testnet: `0x6688dA9243b0095827d60E528f38e0933f65904a`, deploy tx `0xdc8c3d0b57219675dbb2804b2c6a7a78c32c07681c410328322e0fe368e3cec9` (`ACCEPTED`/`AGREE`/`FINISHED_WITH_RETURN`), confirmed readable
+- [x] A real, live, end-to-end transaction sequence (register program -> submit two reports, a deliberate paraphrase pair -> challenge -> evaluate) run against Bradbury, not just a bare deploy -- real, unscripted consensus correctly judged `DUPLICATE` with genuine reasoning citing the shared root cause. See `docs/DESIGN.md#live-verification`.

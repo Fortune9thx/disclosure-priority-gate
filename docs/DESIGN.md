@@ -106,7 +106,26 @@ Cloned and read three independently-accepted GenLayer Portal repos, specifically
 
 ## Live verification
 
-See the repository README for the deployed contract address, deploy transaction, and a real end-to-end transaction sequence (register program -> submit two reports -> challenge -> evaluate) run against GenLayer Bradbury testnet, including the model's own unscripted reasoning for each verdict.
+Deployed to GenLayer Bradbury testnet at `0x6688dA9243b0095827d60E528f38e0933f65904a`, deploy tx `0xdc8c3d0b57219675dbb2804b2c6a7a78c32c07681c410328322e0fe368e3cec9` (`ACCEPTED`/`AGREE`/`FINISHED_WITH_RETURN`), confirmed readable via a real `genlayer call get_report_count` returning `0`.
+
+A full, real transaction sequence was then run end to end against this deployment, using the `bradbury-deploy` account (`0xc6e6d3b2accaececeb40ad4bd3df123ddcb4e537`) for every call:
+
+1. **`register_program("live-test-1", "Vulnerabilities in the DisclosurePriorityGate demo staking contract's withdrawal path.", 0, 0)`** -- tx reached `ACCEPTED`/`AGREE`, all 5 initial validators voted `AGREE`.
+2. **`submit_report("live-test-1", "Reentrancy in withdraw()", "The withdraw function sends ETH via a raw call before updating the caller's recorded balance, letting a malicious contract re-enter withdraw and drain funds before the balance is zeroed out.")`** -- `ACCEPTED`/`AGREE`. Confirmed via `get_report("report-0")`: `"status": "confirmed_original"` (auto-confirmed as the program's first report, exactly as designed).
+3. **`submit_report("live-test-1", "Funds can be drained by re-entering the withdraw function", "withdraw() performs the external transfer prior to zeroing out the user's recorded balance, so a recursive call from a fallback function can withdraw repeatedly before state catches up.")`** -- a deliberate paraphrase of report-0, different vocabulary and structure describing the identical root cause. `ACCEPTED`/`AGREE`. Confirmed via `get_report("report-1")`: `"status": "pending"`.
+4. **`challenge_duplicate("report-1", "report-0")`** -- `ACCEPTED`/`AGREE`. Zero stake (the live-test program was registered with `min_challenge_stake=0` specifically so this end-to-end sequence could run as plain CLI calls without needing a custom signing script for value-attached transactions -- the CLI's `write`/`call` commands as of this account's installed version expose no flag for attaching GEN value to a payable call, only `--fee-value` for the transaction's own fee deposit; see `genlayer-cli-tooling-gotchas` -- this affects only whether the `emit_transfer` amount-guard is exercised, not whether the real non-deterministic consensus mechanism itself runs).
+5. **`evaluate_challenge("challenge-0")`** -- the one real non-deterministic round in this whole sequence. `ACCEPTED`/`AGREE`, `txExecutionResultName: FINISHED_WITH_RETURN`. Round detail: 5 validators, 3 `AGREE` + 2 `TIMEOUT` votes (a timeout is validator-infrastructure latency, not a disagreement -- see `genlayer-bradbury-intermittent-read-unavailability` for this account's prior documentation of Bradbury's variable finality latency), still reaching overall `AGREE`. The genuinely unscripted model call, verified by reading the actual stored record afterward, correctly judged:
+
+   ```json
+   {
+     "verdict": "DUPLICATE",
+     "reason": "Both reports describe the same underlying reentrancy vulnerability in the withdraw function where an external transfer occurs before updating the user's balance state, enabling recursive calls to drain funds."
+   }
+   ```
+
+   `get_report("report-1")` afterward confirms `"status": "duplicate_of:report-0"` -- the real judgment landed exactly on the correct bucket for a genuine paraphrase, with reasoning that names the actual shared root cause rather than surface wording, and the deterministic status-routing code applied it correctly.
+
+This is real evidence the independent-re-derivation mechanism converges in practice on a genuinely paraphrased pair of reports, not only in `gltest`'s mock -- the exact scenario this contract's design exists to handle correctly.
 
 ## Limitations
 

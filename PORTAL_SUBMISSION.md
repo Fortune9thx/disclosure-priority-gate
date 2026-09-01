@@ -30,7 +30,9 @@ https://github.com/Fortune9thx/disclosure-priority-gate
 
 **Network:** GenLayer Bradbury Testnet
 
-**Contract address:** `<filled in after live deployment -- see docs/DESIGN.md#live-verification>`
+**Contract address:** [`0x6688dA9243b0095827d60E528f38e0933f65904a`](https://explorer-bradbury.genlayer.com/address/0x6688dA9243b0095827d60E528f38e0933f65904a)
+
+Deploy tx `0xdc8c3d0b57219675dbb2804b2c6a7a78c32c07681c410328322e0fe368e3cec9` -- `ACCEPTED`/`AGREE`/`FINISHED_WITH_RETURN`, confirmed readable. A full `register_program` → `submit_report` (x2) → `challenge_duplicate` → `evaluate_challenge` sequence was run live end to end, not just a bare deploy -- real, unscripted validator consensus correctly judged a deliberately paraphrased second report `DUPLICATE`, citing the actual shared root cause. Full record: `docs/DESIGN.md`'s "Live verification" section.
 
 ## Category / tags
 

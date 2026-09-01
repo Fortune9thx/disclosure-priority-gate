@@ -6,7 +6,11 @@ A reusable GenLayer Intelligent Contract primitive that decides whether a newly 
 
 **Network:** GenLayer Bradbury Testnet
 
-**Contract:** `<filled in after live deployment -- see docs/DESIGN.md#live-verification>`
+**Contract:** [`0x6688dA9243b0095827d60E528f38e0933f65904a`](https://explorer-bradbury.genlayer.com/address/0x6688dA9243b0095827d60E528f38e0933f65904a)
+
+Deploy tx `0xdc8c3d0b57219675dbb2804b2c6a7a78c32c07681c410328322e0fe368e3cec9` reached `ACCEPTED`/`AGREE`/`FINISHED_WITH_RETURN`, confirmed readable (`get_report_count` returns `0`).
+
+**A real, live, end-to-end transaction sequence was run, not just a bare deploy.** `register_program` → `submit_report` (x2, the second a deliberate paraphrase of the first) → `challenge_duplicate` → `evaluate_challenge` all ran as real signed transactions against Bradbury. The genuinely unscripted model call correctly judged the paraphrased second report `DUPLICATE`, with real, specific reasoning: *"Both reports describe the same underlying reentrancy vulnerability in the withdraw function where an external transfer occurs before updating the user's balance state, enabling recursive calls to drain funds."* Full transaction record: [`docs/DESIGN.md`](docs/DESIGN.md#live-verification).
 
 ## The trust problem
 
