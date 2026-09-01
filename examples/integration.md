@@ -8,6 +8,7 @@ DisclosurePriorityGate is a reusable primitive with no domain-specific fields --
 
 - A bounty platform's frontend or keeper should call every write here as a real, directly-signed transaction -- from a program owner's wallet, a reporter's wallet, or a keeper script -- never triggered inline from inside another Intelligent Contract's write execution.
 - A platform that wants to *react to* a resolved challenge or a paid reward (e.g. update its own UI state, index reports for search) should be a **pull-based** consumer: it reads this contract's state via `.view()` when someone explicitly asks, or by watching the `ChallengeResolved`/`RewardClaimed` events, rather than expecting an inline cross-contract callback.
+- **This isn't just a reliability concern -- calling a write here from another contract instead of a direct signed transaction risks silently losing funds.** `register_program`/`submit_report`/`challenge_duplicate` record `gl.message.sender_address` as the owner/reporter/challenger. If that call arrived via cross-contract `.emit()`, `sender_address` is the *calling contract's* address, not a human wallet -- and any later payout to it (a fee, a stake refund, a reward) hits the same silent-failure bug described above, with no error and no recovery. Always have the real end user sign the transaction directly.
 
 ## Example: a bug bounty program's flow via genlayer-js
 
