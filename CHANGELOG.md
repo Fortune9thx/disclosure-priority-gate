@@ -1,0 +1,10 @@
+# Changelog
+
+## 1.0.0 -- initial build (2026-09-01)
+
+- `DisclosurePriorityGate` contract: `register_program`, `submit_report` (payable), `challenge_duplicate` (payable), `evaluate_challenge`, `reclaim_expired_challenge`, `claim_reward` (payable), `update_challenge_stake_requirement`; views `get_program`, `get_report`, `get_challenge`, `get_report_count`, `get_challenge_count`.
+- Every lesson from this account's prior GenLayer builds (ASCII-restricted identity fields, non-blocking manipulation-heuristic screen, discrete verdict buckets with a reasoned fail-closed default, a bounded permissionless liveness escape hatch, CEI ordering, `gl.Event` on every write) applied from the first commit rather than discovered after the fact.
+- Adversarial self-review pass found and closed one real bug before any deployment: a concurrency race allowing two challenges to be opened against the same pending report, letting a later evaluation silently overwrite an earlier one's legitimate resolution. Fixed with a `report["open_challenge_id"]` guard restricting each report to at most one open challenge at a time; regression-tested.
+- Benchmarked against three independently-accepted GenLayer Portal submissions (`tendercouncil`, `spec-compliance-bounty`, `rubricproof-intelligent-contract`); one finding independently corroborated (the concurrency guard above matches `tendercouncil`'s own "one challenge per bidder" pattern), one pattern considered and deliberately not adopted (wrapping the leader's `exec_prompt` call in try/except for a graceful third outcome), reasoning for both documented in `docs/DESIGN.md`.
+- 63 direct-mode tests, `genvm-lint check`/`typecheck` both clean, `.github/workflows/ci.yml` shipped from the initial commit.
+- Deployed to GenLayer Bradbury testnet -- see README.md for the live address, deploy transaction, and end-to-end live verification record.

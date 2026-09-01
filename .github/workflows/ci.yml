@@ -1,0 +1,23 @@
+name: DisclosurePriorityGate checks
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install GenLayer test/lint toolchain
+        run: pip install genlayer-test==0.29.2 genvm-linter==0.11.0 Pillow
+      - name: Lint and validate the contract
+        run: genvm-lint check contracts/DisclosurePriorityGate.py
+      - name: Type-check the contract against the GenLayer SDK
+        run: genvm-lint typecheck contracts/DisclosurePriorityGate.py
+      - name: Run direct-mode tests
+        run: gltest tests/direct -v
