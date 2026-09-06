@@ -7,223 +7,144 @@ duplicate-disclosure adjudication.
 
 ## What this contract does
 
-Any permissionless disclosure/bounty registry (bug bounties, whistleblower
-rewards, prior-art registries, research-priority claims) has the same
-unsolved problem: two independent parties might describe the SAME
-underlying issue in different words, and someone has to decide whether a
-new report is a genuine duplicate of an earlier one or a distinct
-discovery -- without letting a program owner unilaterally dismiss an
+Any permissionless disclosure/bounty registry has the same unsolved
+problem: two parties might describe the SAME underlying issue in different
+words, and someone has to decide whether a new report duplicates an
+earlier one -- without letting a program owner unilaterally dismiss an
 inconvenient report as "duplicate" to dodge a payout.
 
-A program owner registers a disclosure program with a scope, a submission
-fee, and a minimum challenge stake. Anyone may submit a report against that
-program (paying the fee, which goes straight to the owner). A program's
-very first report has nothing to compare against, so it auto-confirms as
-the priority holder; every later report starts "pending" until either it
-survives a challenge or nobody ever challenges it. Anyone (the program
-owner, a rival reporter, a disinterested third party) may permissionlessly
-challenge a pending report as a duplicate of an already-confirmed prior
-report, backing that challenge with a GEN stake. GenLayer's validator set
-then independently judges whether the two reports' title+description
-describe the same underlying issue -- "DUPLICATE" or "DISTINCT" -- and only
-that discrete bucket is what consensus agrees on. A DUPLICATE verdict
-permanently disqualifies the challenged report from ever being rewarded and
-refunds the challenger's stake; a DISTINCT verdict confirms the report as
-an original disclosure and forfeits the challenger's stake to its reporter,
-deterring bad-faith challenges aimed at suppressing a legitimate report.
-Only a confirmed_original, never-rewarded report can ever be paid --
-GenLayer decides only whether two texts describe the same issue, never
-whether a report deserves a reward, how much it is worth, or whether it is
+A program owner registers with a scope, a submission fee, and a minimum
+challenge stake. Anyone may `submit_report` (paying the fee, forwarded
+straight to the owner). A program's first report auto-confirms as the
+priority holder (nothing exists yet to compare it against); every later
+report starts "pending" for a fixed `CHALLENGE_WINDOW_SECONDS`. Anyone may
+`challenge_duplicate` a still-"pending" report against an already-
+"confirmed_original" baseline, staking GEN. GenLayer's validator set then
+independently judges whether the two reports' title+description describe
+the same underlying issue -- "DUPLICATE" or "DISTINCT" -- and only that
+discrete bucket is what consensus agrees on.
+
+A DUPLICATE verdict is immediately dispositive: permanent disqualification,
+challenger refunded. A DISTINCT verdict is deliberately NOT dispositive: it
+settles only THAT ONE challenge (stake forfeited to the reporter, deterring
+bad-faith challenges) and leaves the report "pending" -- surviving a
+challenge against one baseline must never grant immunity from a challenge
+against some OTHER confirmed baseline nobody tried yet. Only once the
+window fully elapses with no open challenge and no DUPLICATE ever recorded
+does `confirm_report` -- permissionless -- actually confirm it. This is
+also what gives a never-challenged report a path to confirmation at all.
+
+Only a confirmed_original, never-rewarded report can ever be paid via
+`claim_reward` -- GenLayer decides only whether two texts describe the same
+issue, never whether a report deserves a reward, how much, or whether it's
 in scope; those stay the program owner's own calls.
 
 ## Why this is a structurally different consensus shape, not a re-skin
 
-This account has built two other adjudication primitives on GenLayer
-before this one -- IndependentEvidenceSettler (claim-vs-fetched-evidence:
-a caller asserts something, and validators independently fetch external
-URLs and judge how well that fetched evidence supports the claim) and
-UpgradeChangelogGate (diff-vs-prose: the contract computes a deterministic
-diff between two already-stored JSON blobs, and validators judge whether a
-proposer's changelog prose is a faithful account of that already-fixed
-diff). Both of those are fundamentally asymmetric: one side is an
-authoritative, contract-derived ground truth (fetched evidence, a computed
-diff), and the other is a claim being checked against it.
+This account's two prior GenLayer adjudication primitives are both
+asymmetric: IndependentEvidenceSettler is claim-vs-fetched-evidence
+(validators independently fetch external URLs and judge how well they
+support a claim); UpgradeChangelogGate is diff-vs-prose (the contract
+computes a deterministic diff, validators judge whether changelog prose
+faithfully accounts for it). Both have one side as authoritative,
+contract-derived ground truth and the other as a claim checked against it.
 
-This contract's judgment is symmetric claim-vs-claim comparison instead:
-neither report is more authoritative than the other, there is no
-third-party ground truth to fetch or compute, and the question put to
-GenLayer -- "do these two independently-written texts describe the same
-underlying issue" -- has no meaning at all unless BOTH sides are read and
-weighed against each other on equal footing. There is nothing here
-resembling a diff or an evidence fetch; the only inputs to the judgment are
-two already-stored, already-agreed pieces of prose, and the entire task is
-comparing them to each other, not to any external or computed reference.
-This is deliberately not a re-skin of this account's other primitives in a
-new domain -- it is a different consensus shape entirely, and the
-"prior_report_id must already be confirmed_original" rule below exists
-precisely to keep that symmetric comparison well-founded (always
-settled-vs-unsettled, never unsettled-vs-unsettled) despite the underlying
-question itself being symmetric.
+This contract is symmetric claim-vs-claim comparison instead: neither
+report is more authoritative, there is no ground truth to fetch or
+compute, and "do these two texts describe the same issue" has no meaning
+unless both sides are weighed on equal footing. The
+`prior_report_id`-must-already-be-`confirmed_original` rule exists
+precisely to keep that symmetric comparison well-founded -- every
+challenge is settled-vs-unsettled, never unsettled-vs-unsettled -- despite
+the underlying question itself being symmetric. Full comparison in
+docs/DESIGN.md's Originality section.
 
-## Why this specific design
+## Why this specific design (full reasoning in docs/DESIGN.md)
 
-1. **Independent re-derivation, not leader-trust.** `validator_fn` does
-   not inspect the leader's claimed verdict for plausibility -- it calls
-   the identical `leader_fn` again, over the identical, already-agreed
-   report texts, and only agrees if its own, independently-run LLM
-   judgment lands on the same bucket. A validator that only checked "is
-   the verdict one of the two valid strings" could be fooled by a leader
-   who fabricated a favorable verdict without genuinely reading either
-   report; this design makes that structurally impossible to accept.
+1. **Independent re-derivation, not leader-trust.** `validator_fn` calls
+   the identical `leader_fn` again over the identical, already-agreed
+   report texts and only agrees if its own fresh judgment lands on the
+   same bucket -- never inspects the leader's claim for shape alone.
 
-2. **Discrete buckets, not a free-form or numeric score.** Two independent
-   LLM calls over the same pair of reports will not produce identical
-   prose, and a continuous "similarity score" would make consensus fail
-   for reasons unrelated to whether the underlying judgment was sound.
-   "DUPLICATE"/"DISTINCT" gives independent validators a small, shared
-   vocabulary two honest, independent readings are likely to converge on.
-   A third "unclear/needs review" bucket was deliberately NOT added: it
-   would not resolve anything (someone still has to decide two-way, later,
-   with no more information than is available now) and would instead give
-   an easy, low-accountability way for a genuinely close call to sit in
-   permanent limbo, re-litigated forever instead of settled. See point 5
-   for which of the two buckets is the correct fail-closed default when
-   the model genuinely cannot decide.
+2. **Discrete buckets, no third "unclear" bucket.** Two independent LLM
+   calls won't produce identical prose or a matching continuous score;
+   "DUPLICATE"/"DISTINCT" gives a small shared vocabulary two honest
+   readings converge on. A third bucket would just let a close call sit
+   in low-accountability limbo instead of being settled. See point 6 for
+   the fail-closed default when the model can't decide.
 
-3. **Bucket is the only thing compared; reasoning text is informational.**
-   `validator_fn` compares `mine["verdict"] == leader_data["verdict"]` and
-   nothing else. The free-text "reason" field is stored for human/UI
-   context but is deliberately NOT part of the equivalence check.
+3. **Bucket is the only thing compared.** `validator_fn` compares
+   `mine["verdict"] == leader_data["verdict"]` only -- free-text "reason"
+   is informational, never part of the equivalence check.
 
-4. **A challenge always compares an unsettled report against an
-   already-settled one, never two unsettled reports against each other.**
-   `challenge_duplicate` requires the challenged report to be "pending"
-   and the baseline (`prior_report_id`) to already be "confirmed_original".
-   This keeps the whole duplicate-graph well-founded by construction: a
-   "confirmed_original" report is permanent (it is never re-challenged
-   once it reaches that status), so every challenge is a simple two-node
-   comparison against a fixed, immutable baseline -- there is never a
-   transitive chain of pending reports to reason about, and never a
-   later-registered report that could retroactively destabilize an
-   earlier settled one.
+4. **A challenge always compares unsettled-vs-settled, never
+   unsettled-vs-unsettled.** `challenge_duplicate` requires the target
+   "pending" and the baseline already "confirmed_original". This keeps
+   the duplicate-graph well-founded: `confirmed_original` is permanent
+   (never re-challenged), so every challenge is a simple two-node
+   comparison against a fixed baseline -- no transitive chains.
 
-5. **The fail-closed default, and who it protects.** If the model's raw
-   output cannot be confidently parsed into either bucket, this contract
-   defaults to "DISTINCT", never "DUPLICATE". Reasoning: this contract's
-   entire purpose (stated above) is to stop a program owner -- or anyone
-   else -- from costlessly using an ambiguous or bad-faith "duplicate"
-   challenge to suppress a legitimate report and dodge a payout. Defaulting
-   an unparseable/uncertain outcome to "DUPLICATE" would hand exactly that
-   capability to anyone willing to submit a challenge and hope for a
-   confused model response: worst case for the challenger is a refunded
-   stake, but the reporter silently loses reward eligibility forever with
-   no recourse. Defaulting to "DISTINCT" instead means the worst case of
-   genuine model confusion falls on the challenger (stake forfeited to the
-   reporter, exactly the same real cost as losing a challenge on the
-   merits) and the reporter's standing is never destroyed by an
-   inconclusive round. This also mirrors this contract's own explicit
-   deterrent design for a losing challenge on the merits (stake forfeiture
-   to the reporter) -- an inconclusive challenge is treated the same as a
-   failed one, not as a free retry for the challenger.
+5. **Surviving one challenge must never confer immunity from a challenge
+   against a DIFFERENT baseline.** A challenge only ever compares against
+   ONE, challenger-chosen baseline. If a single DISTINCT verdict against
+   one weak/cherry-picked baseline immediately and permanently confirmed
+   a report, a colluding challenger could launder it past a genuinely
+   matching baseline nobody tried. So `evaluate_challenge`'s DISTINCT
+   branch only ever settles that one challenge and leaves the report
+   "pending"; `confirm_report` -- a separate, later, permissionless step
+   gated on the full window elapsing with nothing open -- is what
+   actually confirms it. Also closes a related gap: an unchallenged
+   report previously had no confirmation path at all. Found by a GenLayer
+   Portal steward reviewing this contract's first submission, not this
+   account's own review passes -- full finding in docs/DESIGN.md's
+   "Steward review" section.
 
-6. **GenLayer's role is deliberately narrow.** This contract never asks
-   the model whether a report is in scope, valid, severe, or worth a
-   reward -- only whether two already-submitted texts describe the same
-   underlying issue. Scope judgment, reward sizing, and the decision to
-   pay at all remain the program owner's own calls via `claim_reward`.
+6. **Fail-closed default: "DISTINCT", never "DUPLICATE".** An unparseable
+   verdict defaulting to DUPLICATE would let anyone costlessly try to get
+   a confused-model dismissal of an inconvenient report -- worst case for
+   the challenger is a refund, but the reporter loses standing forever.
+   Defaulting DISTINCT instead puts the cost of genuine model confusion on
+   the challenger (stake forfeited, same as losing on the merits), never
+   on the reporter's standing.
 
-## How this maps to known GenLayer Portal rejection patterns
+7. **GenLayer's role is deliberately narrow.** Never asked whether a
+   report is in scope, valid, severe, or worth a reward -- only whether
+   two texts describe the same issue. Everything else is the owner's call.
 
-- "Validators that only check well-formed strings" -- closed by (1):
-  `validator_fn` re-derives the verdict from scratch via the identical
-  `leader_fn`, never inspects the leader's JSON for shape alone.
-- "Quantitative outcomes not bound by equivalence criteria" -- the verdict
-  bucket is the only value `validator_fn` compares and the only outcome
-  field this contract stores, returns, or acts on (report status, stake
-  routing).
-- "Nested non-deterministic blocks" -- `evaluate_challenge` contains
-  exactly ONE top-level non-deterministic call,
-  `gl.vm.run_nondet_unsafe(leader_fn, validator_fn)`. All validation and
-  all stake/status bookkeeping is plain deterministic code outside it.
-- "State changes from caller text alone" -- a report's reward eligibility
-  never moves from either party's own say-so: it moves only after an
-  agreed verdict from independent LLM judgment (or is left untouched by an
-  expired, inconclusive challenge).
-- "Staked funds with no bounded escape hatch if consensus never resolves"
-  -- see the dedicated analysis below. `challenge_duplicate` is the only
-  method that escrows GEN pending a non-deterministic resolution, and
-  `reclaim_expired_challenge` is its bounded, permissionless timeout path.
+## Liveness: only `challenge_duplicate` needs an escape hatch
 
-## Which path actually needs a liveness escape hatch, and why the other
-## two deliberately do not
+`submit_report` and `claim_reward` both forward their ENTIRE attached
+`gl.message.value` synchronously in the same transaction -- a paid service
+fee and a direct owner payment, never an escrow, so neither can ever strand
+a balance. `challenge_duplicate`'s stake is genuinely different: held
+pending `evaluate_challenge`'s non-deterministic resolution, which being
+permissionlessly retriable is NOT thereby guaranteed to ever converge.
+`reclaim_expired_challenge` is the bounded (72h), permissionless timeout
+for exactly that case -- refunds the stake, marks the challenge "expired",
+never touches the challenged report's own status. Full per-path analysis
+in docs/DESIGN.md.
 
-Only ONE of this contract's three GEN-carrying paths ever holds a balance
-pending a non-deterministic resolution:
-
-- `submit_report` forwards its ENTIRE attached `gl.message.value`
-  (not just the configured `submission_fee`) to the program owner
-  synchronously, in the same transaction, before returning. This is a
-  paid-service fee, not an escrow -- there is no later step that must
-  happen for this value to be released, and no condition under which it
-  could ever be "stuck": the transfer either happens as part of this one
-  transaction succeeding, or the whole transaction (including the report
-  record) never commits at all. Forwarding the full attached value, not
-  just the minimum fee, is deliberate: it means this method never retains
-  any balance of its own making, even from an accidental overpayment, so
-  there is structurally nothing here that could ever need a rescue path.
-- `claim_reward` is the same shape: the owner attaches whatever GEN they
-  want to pay as the reward, and it is forwarded to the reporter
-  synchronously in the same call. There is no stored `reward_amount`, no
-  reward pool, and no separate "release" step -- the owner pays out of
-  pocket at the exact moment they decide to, or the call simply never
-  happens. Nothing is ever escrowed here either.
-- `challenge_duplicate` is genuinely different: its stake is deliberately
-  held in the contract pending `evaluate_challenge`'s non-deterministic
-  resolution, which depends on independent validators reaching agreement
-  -- a process that, being permissionlessly retriable, is NOT thereby
-  guaranteed to ever converge (a genuinely ambiguous pair of reports, or a
-  persistent validator-infrastructure issue, could cause every attempt to
-  fail to reach agreement indefinitely). This is the one place funds can
-  actually be stuck, and it is the one place this contract provides
-  `reclaim_expired_challenge`: a bounded (72h), permissionless timeout
-  that refunds the challenger's stake and marks the challenge "expired"
-  without ever touching the challenged report's own status -- an expired
-  challenge proved nothing either way, so the report must remain exactly
-  as challengeable (or not) as it was before the challenge was filed.
-
-## The exact Equivalence Principle strategy chosen, and why
+## Equivalence Principle strategy
 
 `gl.vm.run_nondet_unsafe(leader_fn, validator_fn)` with a hand-written
-custom `validator_fn`, matching this account's prior primitives
-(IndependentEvidenceSettler, UpgradeChangelogGate): GenLayer's own
-documentation describes a custom leader/validator pair that independently
-re-runs the task and compares specific result fields as the recommended
-approach for classification-shaped decisions, where non-comparative
-validation should be avoided unless the validator can independently verify
-the decision from source data -- which this validator genuinely can and
-does, since both report texts it compares are already-fixed, already-agreed
-state, not something it has to trust the leader's account of.
-`validator_fn`'s one fallible step (`mine = leader_fn()`) is wrapped in
-`try/except -> return False`, closing the one documented gap between
-`run_nondet_unsafe` and the sandboxed `run_nondet` variant; `run_nondet_unsafe`
-with a custom validator is the pattern already proven live on GenLayer
-Bradbury in this account's history, while `run_nondet` has no live-verified
-precedent here yet.
+custom validator, matching this account's prior primitives: the validator
+genuinely can independently re-verify the decision from already-agreed
+source data, so a custom re-deriving validator is the stronger choice over
+the convenience wrappers. `validator_fn`'s one fallible step is wrapped in
+`try/except -> return False`, closing the one documented gap versus the
+sandboxed `run_nondet` variant, which has no live-verified precedent here.
 
 ## Storage
 
-`TreeMap[str, str]` only, matching the only value type with reliable
-post-deploy readability on the current GenVM build behind Bradbury.
-Structured records (programs, reports, challenges) are JSON-encoded before
-storage. `report_counter`/`challenge_counter` are the only genuinely scalar
-fields and use `u256` directly. No public method ever returns a raw
-`dict` -- every view returns a JSON-encoded `str`, and no field anywhere in
-this contract is ever a bare Python float (fees/stakes/rewards are `u256`
-on the wire and decimal-string-safe in storage), so no return value can
-ever carry an un-encodable float, structurally.
+`TreeMap[str, str]` only -- the only value type with reliable post-deploy
+readability on the current GenVM build behind Bradbury. Structured records
+are JSON-encoded; `report_counter`/`challenge_counter` use `u256` directly.
+No public method ever returns a raw `dict`, and no field is ever a bare
+Python float (fees/stakes/rewards are `u256` on the wire, decimal strings
+in storage) -- no return value can carry an un-encodable float.
 
-Full design rationale, threat model, race-condition analysis, and
-integration guide: see docs/DESIGN.md in this repository.
+Full design rationale, threat model, race-condition analysis, steward
+review, and integration guide: see docs/DESIGN.md in this repository.
 """
 
 import json
@@ -247,6 +168,20 @@ MAX_REASON_CHARS = 400
 # account's UpgradeChangelogGate uses, benchmarked from an independently
 # accepted Portal submission's own permissionless-refund convention.
 CHALLENGE_TIMEOUT_SECONDS = 259200  # 72h
+
+# Fixed window, from a report's own submission, during which it remains
+# "pending" and challengeable. A DISTINCT verdict against one baseline
+# never shortens or satisfies this window by itself -- see confirm_report
+# and the module docstring's design point 5 for why. Deliberately a GLOBAL
+# constant, not owner-configurable: a per-program window would let an
+# owner shorten it to rush confirmation past a legitimate challenger, or
+# lengthen it to stall confirmation of an inconvenient report indefinitely.
+# Same duration as CHALLENGE_TIMEOUT_SECONDS by deliberate convention (both
+# default to this account's established 72h window elsewhere), not because
+# the two concepts are coupled -- one bounds how long an individual filed
+# challenge may sit unevaluated, the other bounds how long a report as a
+# whole remains contestable at all.
+CHALLENGE_WINDOW_SECONDS = 259200  # 72h
 
 # program_id must look like a deliberate handle, not arbitrary text: lower-
 # case start, then letters/digits/_/-, max 64 chars. Because this ASCII-only
@@ -313,6 +248,10 @@ class ChallengeSubmitted(gl.Event):
 
 class ChallengeResolved(gl.Event):
     def __init__(self, challenge_id: str, report_id: str, verdict: str, /, **blob): ...
+
+
+class ReportConfirmed(gl.Event):
+    def __init__(self, report_id: str, program_id: str, /): ...
 
 
 class ChallengeExpired(gl.Event):
@@ -636,7 +575,16 @@ class DisclosurePriorityGate(gl.Contract):
         module docstring's "structurally different consensus shape"
         section). If independent validators cannot reach agreement, or
         this call raises before that point, no state below is written and
-        the SAME challenge_id may be evaluated again later."""
+        the SAME challenge_id may be evaluated again later.
+
+        A DUPLICATE verdict is immediately dispositive and permanent. A
+        DISTINCT verdict is NOT: it settles only this one challenge
+        (stake forfeited to the reporter) and leaves the report
+        "pending" -- surviving a challenge against one baseline must
+        never grant immunity from a challenge against a different one.
+        See confirm_report() for the separate, later, time-gated step
+        that actually confirms a report, and the module docstring's
+        design point 5 for the full reasoning."""
         raw_challenge = self.challenges.get(challenge_id)
         if raw_challenge is None:
             raise gl.vm.UserError(f"no challenge found for id: {challenge_id}")
@@ -733,8 +681,15 @@ class DisclosurePriorityGate(gl.Contract):
         report["open_challenge_id"] = None
         if verdict == "DUPLICATE":
             report["status"] = f"duplicate_of:{prior_report_id}"
-        else:
-            report["status"] = "confirmed_original"
+        # DISTINCT deliberately does NOT confirm the report here -- it
+        # only settles THIS challenge. Surviving a challenge against one
+        # challenger-selected baseline must never, by itself, grant
+        # permanent immunity from a challenge against some OTHER
+        # confirmed baseline nobody happened to try yet. The report stays
+        # "pending" (still challengeable against a different baseline)
+        # until its fixed CHALLENGE_WINDOW_SECONDS elapses with no open
+        # challenge and no DUPLICATE ruling ever recorded against it --
+        # see confirm_report() and the module docstring's design point 5.
         self.reports[challenge["report_id"]] = json.dumps(report)
 
         if stake > 0:
@@ -817,6 +772,73 @@ class DisclosurePriorityGate(gl.Contract):
             gl.get_contract_at(Address(challenger)).emit_transfer(value=u256(stake))
 
         ChallengeExpired(challenge_id, report_id, Address(challenger)).emit()
+
+    # -----------------------------------------------------------------
+    # Public write: confirm a report once its challenge window has
+    # closed with no open challenge and no DUPLICATE ruling against it
+    # -----------------------------------------------------------------
+    @gl.public.write
+    def confirm_report(self, report_id: str) -> None:
+        """Permissionlessly callable by anyone. This is the ONLY way a
+        non-first report ever reaches "confirmed_original" -- a program's
+        very first report auto-confirms immediately at submission
+        instead, since it has no possible baseline to have been
+        challenged against in the first place.
+
+        Requires: report.status == "pending" (a report already
+        "confirmed_original" or "duplicate_of:..." cannot be re-confirmed
+        or has already failed permanently); report.open_challenge_id is
+        None (a currently-open challenge must resolve or expire first --
+        see reclaim_expired_challenge -- rather than being silently
+        bypassed by an impatient confirmation attempt); and at least
+        CHALLENGE_WINDOW_SECONDS have elapsed since report.created_at.
+
+        Why this exists, and why it is separate from evaluate_challenge:
+        surviving a single DISTINCT verdict against one challenger-
+        selected baseline must never, by itself, grant a report permanent
+        immunity from a challenge against some OTHER already-confirmed
+        baseline nobody happened to try yet -- see the module docstring's
+        design point 5. So evaluate_challenge's DISTINCT branch only ever
+        settles that one challenge and leaves the report "pending". This
+        method is the separate, later, time-gated step that actually
+        confirms it -- reachable only once the full window has passed
+        with every challenge filed against it (if any) having resolved
+        DISTINCT, none having resolved DUPLICATE, and none currently
+        open. A report that receives zero challenges at all reaches this
+        exact same state just as validly: the window elapses, nobody
+        ever opened a challenge, so open_challenge_id was never anything
+        but None, and confirmation proceeds -- this is also what gives an
+        unchallenged report a path to confirmation at all, closing a
+        related gap the original design left open."""
+        raw_report = self.reports.get(report_id)
+        if raw_report is None:
+            raise gl.vm.UserError(f"no report found for id: {report_id}")
+        report = json.loads(raw_report)
+
+        if report["status"] != "pending":
+            raise gl.vm.UserError(
+                f"report {report_id} is not pending (status: {report['status']}); "
+                "it cannot be confirmed"
+            )
+        if report.get("open_challenge_id") is not None:
+            raise gl.vm.UserError(
+                f"report {report_id} has an open challenge "
+                f"({report['open_challenge_id']}); it cannot be confirmed "
+                "until that challenge resolves or expires"
+            )
+
+        now = _now_iso()
+        elapsed = _elapsed_seconds(now, str(report["created_at"]))
+        if elapsed < CHALLENGE_WINDOW_SECONDS:
+            raise gl.vm.UserError(
+                f"report {report_id}'s challenge window has not yet closed "
+                f"({int(elapsed)}s elapsed of {CHALLENGE_WINDOW_SECONDS}s required)"
+            )
+
+        report["status"] = "confirmed_original"
+        self.reports[report_id] = json.dumps(report)
+
+        ReportConfirmed(report_id, report["program_id"]).emit()
 
     # -----------------------------------------------------------------
     # Public write: pay a reward for a confirmed, unrewarded report
@@ -1037,7 +1059,7 @@ def _coerce_verdict(raw) -> dict:
     being dishonest, just inconsistent about casing) but the canonical
     uppercase string is always what gets stored/returned. Anything that is
     not a case-insensitive match to one of the two valid strings fails
-    closed to "DISTINCT" -- see module docstring, design point 5, for the
+    closed to "DISTINCT" -- see module docstring, design point 6, for the
     full reasoning on why that specific direction, not "DUPLICATE", is the
     safe default."""
     parsed = _parse_json_object(raw)

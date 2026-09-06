@@ -6,11 +6,11 @@ A reusable GenLayer Intelligent Contract primitive that decides whether a newly 
 
 **Network:** GenLayer Bradbury Testnet
 
-**Contract:** [`0x6688dA9243b0095827d60E528f38e0933f65904a`](https://explorer-bradbury.genlayer.com/address/0x6688dA9243b0095827d60E528f38e0933f65904a)
+**Contract (1.1.0, current):** `<filled in after redeploy -- see docs/DESIGN.md#live-verification>`
 
-Deploy tx `0xdc8c3d0b57219675dbb2804b2c6a7a78c32c07681c410328322e0fe368e3cec9` reached `ACCEPTED`/`AGREE`/`FINISHED_WITH_RETURN`, confirmed readable (`get_report_count` returns `0`).
+This supersedes 1.0.0 (`0x6688dA9243b0095827d60E528f38e0933f65904a`, deploy tx `0xdc8c3d0b57219675dbb2804b2c6a7a78c32c07681c410328322e0fe368e3cec9`), redeployed after a GenLayer Portal steward's review found a real gap in the challenge lifecycle: a `DISTINCT` verdict against one challenger-selected baseline was incorrectly granting a report permanent immunity from challenges against other confirmed baselines, and an unchallenged report had no path to confirmation at all. Fixed with a new `confirm_report` method and a fixed challenge window -- full finding and fix in [`docs/DESIGN.md`](docs/DESIGN.md#steward-review-first-submission----a-real-gap-in-the-challenge-lifecycle-not-caught-by-this-accounts-own-self-review), CHANGELOG.md.
 
-**A real, live, end-to-end transaction sequence was run, not just a bare deploy.** `register_program` → `submit_report` (x2, the second a deliberate paraphrase of the first) → `challenge_duplicate` → `evaluate_challenge` all ran as real signed transactions against Bradbury. The genuinely unscripted model call correctly judged the paraphrased second report `DUPLICATE`, with real, specific reasoning: *"Both reports describe the same underlying reentrancy vulnerability in the withdraw function where an external transfer occurs before updating the user's balance state, enabling recursive calls to drain funds."* Full transaction record: [`docs/DESIGN.md`](docs/DESIGN.md#live-verification).
+**A real, live, end-to-end transaction sequence was run on 1.0.0, not just a bare deploy.** `register_program` → `submit_report` (x2, the second a deliberate paraphrase of the first) → `challenge_duplicate` → `evaluate_challenge` all ran as real signed transactions against Bradbury. The genuinely unscripted model call correctly judged the paraphrased second report `DUPLICATE`, with real, specific reasoning: *"Both reports describe the same underlying reentrancy vulnerability in the withdraw function where an external transfer occurs before updating the user's balance state, enabling recursive calls to drain funds."* This record still stands as proof the independent-re-derivation mechanism itself converges correctly -- the `DUPLICATE` branch and `leader_fn`/`validator_fn` are unchanged by the 1.1.0 fix, which only touched the `DISTINCT` branch's status-write logic and added `confirm_report`. Full transaction record: [`docs/DESIGN.md`](docs/DESIGN.md#live-verification).
 
 ## The trust problem
 
@@ -29,16 +29,20 @@ flowchart LR
     E --> F[Every validator independently re-judges from scratch]
     F --> G{DUPLICATE / DISTINCT}
     G -->|DUPLICATE| H[Report permanently ineligible; challenger stake refunded]
-    G -->|DISTINCT| I[Report confirmed original; challenger stake forfeited to reporter]
-    I --> J[Owner may claim_reward for a confirmed, unrewarded report]
+    G -->|DISTINCT| I[This challenge settles; stake forfeited to reporter; report STAYS pending]
+    I --> C
+    C --> K[Challenge window closes, nothing open, no DUPLICATE ever ruled]
+    K --> L[Anyone calls confirm_report -- report becomes confirmed_original]
+    L --> J[Owner may claim_reward for a confirmed, unrewarded report]
 ```
 
 1. A program owner registers a bounty with `register_program`: a `program_id`, a `scope` description, a `submission_fee`, and a `min_challenge_stake`.
-2. Anyone may `submit_report` against a registered program, paying the fee (forwarded straight to the owner). The very first report for a program has nothing to compare against, so it auto-confirms as the priority holder; every later report starts `"pending"`.
+2. Anyone may `submit_report` against a registered program, paying the fee (forwarded straight to the owner). The very first report for a program has nothing to compare against, so it auto-confirms as the priority holder; every later report starts `"pending"` for a fixed challenge window.
 3. Anyone -- the owner, a rival reporter, a disinterested third party -- may `challenge_duplicate` a still-`"pending"` report against an already-`"confirmed_original"` baseline, backing the challenge with a GEN stake.
 4. `evaluate_challenge` is the one non-deterministic step: the leader reads both reports' title+description and judges whether they describe the same underlying issue, forced into exactly one of two buckets. Every validator independently re-reads both reports and re-runs the identical judgment -- never trusts the leader's claim -- and only agreement counts.
-5. A `DUPLICATE` verdict permanently disqualifies the challenged report from ever being rewarded and refunds the challenger's stake. A `DISTINCT` verdict confirms the report as an original disclosure and forfeits the challenger's stake to its reporter -- a deliberate deterrent against bad-faith challenges aimed at suppressing a legitimate report.
-6. Only the program owner may `claim_reward` for a report that is `confirmed_original` and not yet rewarded -- whatever GEN they attach to the call is the reward, paid directly, once.
+5. A `DUPLICATE` verdict permanently disqualifies the challenged report from ever being rewarded and refunds the challenger's stake. A `DISTINCT` verdict settles only THAT challenge (stake forfeited to the reporter, deterring bad-faith challenges) and leaves the report `"pending"` -- surviving a challenge against one baseline must never grant immunity from a challenge against a different one.
+6. Once a report's fixed challenge window has fully elapsed with no challenge currently open and no `DUPLICATE` ever recorded against it, anyone may permissionlessly `confirm_report` it -- the only way a non-first report reaches `confirmed_original`. This also gives a never-challenged report a path to confirmation.
+7. Only the program owner may `claim_reward` for a report that is `confirmed_original` and not yet rewarded -- whatever GEN they attach to the call is the reward, paid directly, once.
 
 ## Why GenLayer is required
 
@@ -68,6 +72,12 @@ def reclaim_expired_challenge(self, challenge_id: str) -> None
     # after CHALLENGE_TIMEOUT_SECONDS (72h) of no agreed evaluation. Leaves the
     # challenged report's status exactly as it was.
 
+@gl.public.write
+def confirm_report(self, report_id: str) -> None
+    # permissionless; the ONLY way a non-first report reaches "confirmed_original".
+    # Requires status == "pending", no challenge currently open, and
+    # CHALLENGE_WINDOW_SECONDS (72h) elapsed since the report's own submission.
+
 @gl.public.write.payable
 def claim_reward(self, report_id: str) -> None
     # owner-only; requires status == "confirmed_original" and not yet rewarded;
@@ -93,7 +103,7 @@ def get_report_count(self) -> u256
 def get_challenge_count(self) -> u256
 ```
 
-Every state-mutating write also emits a `gl.Event` (`ProgramRegistered`, `ReportSubmitted`, `ChallengeSubmitted`, `ChallengeResolved`, `ChallengeExpired`, `RewardClaimed`, `StakeRequirementUpdated`) so an off-chain indexer or frontend can track the full lifecycle without polling every `report_id`/`challenge_id`.
+Every state-mutating write also emits a `gl.Event` (`ProgramRegistered`, `ReportSubmitted`, `ChallengeSubmitted`, `ChallengeResolved`, `ChallengeExpired`, `ReportConfirmed`, `RewardClaimed`, `StakeRequirementUpdated`) so an off-chain indexer or frontend can track the full lifecycle without polling every `report_id`/`challenge_id`.
 
 ## Record schemas
 
@@ -114,7 +124,7 @@ Every state-mutating write also emits a `gl.Event` (`ProgramRegistered`, `Report
 }
 ```
 
-`status` is one of `"pending"`, `"confirmed_original"`, or `"duplicate_of:<report_id>"`.
+`status` is one of `"pending"`, `"confirmed_original"`, or `"duplicate_of:<report_id>"`. A report stays `"pending"` even after surviving a `DISTINCT` verdict against one baseline -- it only reaches `"confirmed_original"` via `confirm_report` once its challenge window closes with no open challenge and no `DUPLICATE` ever recorded against it (or immediately, if it was the program's first report).
 
 `get_challenge` returns:
 
@@ -147,7 +157,7 @@ genvm-lint typecheck contracts/DisclosurePriorityGate.py
 gltest tests/direct -v
 ```
 
-63 direct-mode tests, `genvm-lint check`/`typecheck` both clean, `.github/workflows/ci.yml` runs all three on every push/PR.
+74 direct-mode tests, `genvm-lint check`/`typecheck` both clean, `.github/workflows/ci.yml` runs all three on every push/PR.
 
 ## Integration
 

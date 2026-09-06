@@ -55,6 +55,12 @@ DESC_B_DISTINCT = (
 # Must match CHALLENGE_TIMEOUT_SECONDS in the contract itself.
 _CHALLENGE_TIMEOUT_SECONDS = 259200
 
+# Must match CHALLENGE_WINDOW_SECONDS in the contract itself. A separate
+# constant from _CHALLENGE_TIMEOUT_SECONDS even though both currently equal
+# 72h -- one governs how long an individual filed challenge may sit
+# unevaluated, the other how long a report as a whole remains contestable.
+_CHALLENGE_WINDOW_SECONDS = 259200
+
 
 def _verdict_response(verdict: str, reason: str = "Compared the substance of both reports.") -> str:
     return json.dumps({"verdict": verdict, "reason": reason})
@@ -122,6 +128,12 @@ def _warp_past_timeout(direct_vm, from_iso: str, extra_seconds: int = 60):
     direct_vm.warp(future.isoformat().replace("+00:00", "Z"))
 
 
+def _warp_past_window(direct_vm, from_iso: str, extra_seconds: int = 60):
+    base = datetime.fromisoformat(from_iso.replace("Z", "+00:00"))
+    future = base + timedelta(seconds=_CHALLENGE_WINDOW_SECONDS + extra_seconds)
+    direct_vm.warp(future.isoformat().replace("+00:00", "Z"))
+
+
 # ---------------------------------------------------------------------------
 # Happy path
 # ---------------------------------------------------------------------------
@@ -182,8 +194,19 @@ class TestHappyPath:
         assert verdict == "DISTINCT"
 
         report = json.loads(contract.get_report(report_id=second_id))
-        assert report["status"] == "confirmed_original"
+        # DISTINCT settles only this one challenge -- it does NOT confirm
+        # the report by itself. The report stays "pending" (still
+        # challengeable against a different baseline) until the fixed
+        # challenge window elapses with no open challenge, via
+        # confirm_report(). See TestConfirmReport and
+        # TestNoImmunityAfterDistinct for the full lifecycle this closes.
+        assert report["status"] == "pending"
         assert report["open_challenge_id"] is None
+
+        _warp_past_window(direct_vm, report["created_at"])
+        contract.confirm_report(report_id=second_id)
+        confirmed = json.loads(contract.get_report(report_id=second_id))
+        assert confirmed["status"] == "confirmed_original"
 
     def test_report_and_challenge_counts_increment(self, contract, direct_vm):
         _register(contract, direct_vm)
@@ -382,15 +405,18 @@ class TestChallengeValidation:
         with pytest.raises(Exception):
             contract.challenge_duplicate(report_id=third_id, prior_report_id=second_id)
 
-    def test_cannot_challenge_an_already_settled_report(self, contract, direct_vm):
+    def test_cannot_challenge_an_already_duplicate_report(self, contract, direct_vm):
+        """A DUPLICATE verdict is immediately dispositive and permanent
+        -- unlike a DISTINCT verdict, which deliberately leaves the
+        report "pending" and re-challengeable against a different
+        baseline (see TestNoImmunityAfterDistinct). Once a report is
+        "duplicate_of:...", it can never be challenged again."""
         _register(contract, direct_vm)
         first_id = _submit(contract, direct_vm)
         second_id = _submit(contract, direct_vm, title=TITLE_B_DUP, description=DESC_B_DUP)
         challenge_id = _challenge(contract, direct_vm, second_id, first_id)
-        _evaluate(contract, direct_vm, challenge_id, "DISTINCT")
-        # second_id is now confirmed_original -- a THIRD report tries to
-        # use it as a fresh challenge target is fine, but re-challenging
-        # second_id itself must be rejected (no longer "pending").
+        _evaluate(contract, direct_vm, challenge_id, "DUPLICATE")
+
         third_id = _submit(
             contract, direct_vm, title="Another allegedly-duplicate report",
             description="Some other description entirely, unrelated wording.",
@@ -398,6 +424,18 @@ class TestChallengeValidation:
         direct_vm.clear_mocks()
         with pytest.raises(Exception):
             contract.challenge_duplicate(report_id=second_id, prior_report_id=third_id)
+
+    def test_cannot_challenge_a_confirmed_original_report(self, contract, direct_vm):
+        """Once a report reaches confirmed_original -- whether as a
+        program's auto-confirmed first report, or via confirm_report()
+        after its window closes -- it is equally terminal and can never
+        be challenged again."""
+        _register(contract, direct_vm)
+        first_id = _submit(contract, direct_vm)
+        second_id = _submit(contract, direct_vm, title=TITLE_B_DUP, description=DESC_B_DUP)
+        direct_vm.clear_mocks()
+        with pytest.raises(Exception):
+            contract.challenge_duplicate(report_id=first_id, prior_report_id=second_id)
 
     def test_cannot_open_a_second_concurrent_challenge_on_same_report(
         self, contract, direct_vm
@@ -453,6 +491,173 @@ class TestChallengeValidation:
         direct_vm.clear_mocks()
         with pytest.raises(Exception):
             contract.challenge_duplicate(report_id=second_id, prior_report_id="report-999")
+
+
+# ---------------------------------------------------------------------------
+# The core regression a GenLayer Portal steward's review found and this
+# fix exists for: surviving a challenge against ONE challenger-selected
+# baseline must never confer immunity from a challenge against a
+# DIFFERENT already-confirmed baseline. Before this fix, evaluate_challenge
+# flipped a report straight to "confirmed_original" on a DISTINCT verdict,
+# permanently foreclosing any future challenge -- even one against a
+# baseline the report genuinely does duplicate.
+# ---------------------------------------------------------------------------
+
+
+class TestNoImmunityAfterDistinct:
+    def test_surviving_distinct_against_one_baseline_does_not_block_a_duplicate_ruling_against_another(
+        self, contract, direct_vm
+    ):
+        _register(contract, direct_vm)
+        baseline_a = _submit(contract, direct_vm, title=TITLE_A, description=DESC_A)
+
+        # A second, independently confirmed baseline in the SAME program
+        # -- confirmed via the window (no challenge involved), so this
+        # test isolates exactly the scenario the steward described rather
+        # than depending on another instance of the same mechanism.
+        baseline_b_report = _submit(
+            contract, direct_vm, title=TITLE_B_DISTINCT, description=DESC_B_DISTINCT
+        )
+        baseline_b = json.loads(contract.get_report(report_id=baseline_b_report))
+        _warp_past_window(direct_vm, baseline_b["created_at"])
+        contract.confirm_report(report_id=baseline_b_report)
+        assert json.loads(contract.get_report(report_id=baseline_b_report))["status"] == "confirmed_original"
+
+        # The report under test: genuinely distinct from baseline_a, but
+        # (unbeknownst to the first challenger) actually a duplicate of
+        # baseline_b.
+        target = _submit(
+            contract, direct_vm,
+            title="Reward accounting can be corrupted by a large stake",
+            description=(
+                "accrueRewards() has no overflow guard on its multiplication "
+                "of stake by the rate multiplier, so a sufficiently large "
+                "stake wraps the accumulator and corrupts reward accounting."
+            ),
+        )
+
+        # First challenge: against baseline_a. Genuinely distinct -- DISTINCT.
+        challenge_1 = _challenge(contract, direct_vm, target, baseline_a)
+        assert _evaluate(contract, direct_vm, challenge_1, "DISTINCT") == "DISTINCT"
+
+        report_after_first = json.loads(contract.get_report(report_id=target))
+        assert report_after_first["status"] == "pending"
+        assert report_after_first["open_challenge_id"] is None
+
+        # Second challenge: against baseline_b, the ACTUAL duplicate.
+        # Must be allowed -- surviving the first challenge granted no
+        # immunity -- and must correctly resolve DUPLICATE.
+        challenge_2 = _challenge(contract, direct_vm, target, baseline_b_report)
+        assert _evaluate(contract, direct_vm, challenge_2, "DUPLICATE") == "DUPLICATE"
+
+        final_report = json.loads(contract.get_report(report_id=target))
+        assert final_report["status"] == f"duplicate_of:{baseline_b_report}"
+
+    def test_report_confirmed_via_window_is_a_valid_baseline_for_a_later_challenge(
+        self, contract, direct_vm
+    ):
+        """A report confirmed by confirm_report() (never having survived
+        any challenge, or having survived one) is exactly as valid a
+        challenge baseline as a program's auto-confirmed first report."""
+        _register(contract, direct_vm)
+        _submit(contract, direct_vm)
+        second_id = _submit(
+            contract, direct_vm, title=TITLE_B_DISTINCT, description=DESC_B_DISTINCT
+        )
+        second = json.loads(contract.get_report(report_id=second_id))
+        _warp_past_window(direct_vm, second["created_at"])
+        contract.confirm_report(report_id=second_id)
+
+        third_id = _submit(contract, direct_vm, title=TITLE_B_DUP, description=DESC_B_DUP)
+        challenge_id = _challenge(contract, direct_vm, third_id, second_id)
+        assert _evaluate(contract, direct_vm, challenge_id, "DUPLICATE") == "DUPLICATE"
+        assert json.loads(contract.get_report(report_id=third_id))["status"] == f"duplicate_of:{second_id}"
+
+
+# ---------------------------------------------------------------------------
+# Permissionless confirmation once a report's fixed challenge window closes
+# with no open challenge and no DUPLICATE ruling against it. This is the
+# ONLY way a non-first report reaches confirmed_original, and is also what
+# gives an unchallenged report a path to confirmation at all.
+# ---------------------------------------------------------------------------
+
+
+class TestConfirmReport:
+    def test_cannot_confirm_before_window_elapses(self, contract, direct_vm):
+        _register(contract, direct_vm)
+        _submit(contract, direct_vm)
+        second_id = _submit(contract, direct_vm, title=TITLE_B_DUP, description=DESC_B_DUP)
+        direct_vm.clear_mocks()
+        with pytest.raises(Exception):
+            contract.confirm_report(report_id=second_id)
+
+    def test_can_confirm_unchallenged_report_after_window(self, contract, direct_vm):
+        _register(contract, direct_vm)
+        _submit(contract, direct_vm)
+        second_id = _submit(contract, direct_vm, title=TITLE_B_DUP, description=DESC_B_DUP)
+        report = json.loads(contract.get_report(report_id=second_id))
+        _warp_past_window(direct_vm, report["created_at"])
+        contract.confirm_report(report_id=second_id)  # must not raise
+        assert json.loads(contract.get_report(report_id=second_id))["status"] == "confirmed_original"
+
+    def test_cannot_confirm_with_an_open_challenge(self, contract, direct_vm):
+        """The window having elapsed is not enough on its own -- a
+        currently-open challenge must resolve or expire first, so
+        confirmation can never bypass a challenge still genuinely in
+        flight."""
+        _register(contract, direct_vm)
+        first_id = _submit(contract, direct_vm)
+        second_id = _submit(contract, direct_vm, title=TITLE_B_DUP, description=DESC_B_DUP)
+        report = json.loads(contract.get_report(report_id=second_id))
+        _challenge(contract, direct_vm, second_id, first_id)
+        _warp_past_window(direct_vm, report["created_at"])
+        direct_vm.clear_mocks()
+        with pytest.raises(Exception):
+            contract.confirm_report(report_id=second_id)
+
+    def test_can_confirm_after_open_challenge_expires(self, contract, direct_vm):
+        _register(contract, direct_vm)
+        first_id = _submit(contract, direct_vm)
+        second_id = _submit(contract, direct_vm, title=TITLE_B_DUP, description=DESC_B_DUP)
+        challenge_id = _challenge(contract, direct_vm, second_id, first_id)
+        challenge = json.loads(contract.get_challenge(challenge_id=challenge_id))
+        _warp_past_timeout(direct_vm, challenge["created_at"])
+        contract.reclaim_expired_challenge(challenge_id=challenge_id)
+
+        report = json.loads(contract.get_report(report_id=second_id))
+        _warp_past_window(direct_vm, report["created_at"])
+        contract.confirm_report(report_id=second_id)  # must not raise
+        assert json.loads(contract.get_report(report_id=second_id))["status"] == "confirmed_original"
+
+    def test_cannot_confirm_an_already_confirmed_report(self, contract, direct_vm):
+        _register(contract, direct_vm)
+        first_id = _submit(contract, direct_vm)  # program's first report: auto-confirmed
+        direct_vm.clear_mocks()
+        with pytest.raises(Exception):
+            contract.confirm_report(report_id=first_id)
+
+    def test_cannot_confirm_a_duplicate_report(self, contract, direct_vm):
+        _register(contract, direct_vm)
+        first_id = _submit(contract, direct_vm)
+        second_id = _submit(contract, direct_vm, title=TITLE_B_DUP, description=DESC_B_DUP)
+        challenge_id = _challenge(contract, direct_vm, second_id, first_id)
+        _evaluate(contract, direct_vm, challenge_id, "DUPLICATE")
+        direct_vm.clear_mocks()
+        with pytest.raises(Exception):
+            contract.confirm_report(report_id=second_id)
+
+    def test_confirming_unknown_report_raises(self, contract, direct_vm):
+        with pytest.raises(Exception):
+            contract.confirm_report(report_id="report-999")
+
+    def test_anyone_can_confirm_report(self, contract, direct_vm, direct_bob):
+        _register(contract, direct_vm)
+        _submit(contract, direct_vm)
+        second_id = _submit(contract, direct_vm, title=TITLE_B_DUP, description=DESC_B_DUP)
+        report = json.loads(contract.get_report(report_id=second_id))
+        _warp_past_window(direct_vm, report["created_at"])
+        with direct_vm.prank(direct_bob):
+            contract.confirm_report(report_id=second_id)  # must not raise
 
 
 # ---------------------------------------------------------------------------

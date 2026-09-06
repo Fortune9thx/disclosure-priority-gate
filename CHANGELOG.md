@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 -- steward-review fix: no immunity after a single DISTINCT verdict (2026-09-06)
+
+- **GenLayer Portal steward finding:** a `DISTINCT` verdict against one challenger-selected baseline was incorrectly granting a report permanent, immediate immunity from challenges against OTHER already-confirmed baselines -- and an unchallenged report had no path to confirmation at all. Steward's proposed fix, adopted exactly: keep the report pending after each `DISTINCT` result, settle that challenge's stake, and confirm only after a fixed challenge window closes with no duplicate ruling.
+- `evaluate_challenge`'s `DISTINCT` branch no longer sets `report["status"] = "confirmed_original"` -- it now only settles that one challenge (stake still forfeited to the reporter) and leaves the report `"pending"`.
+- New method `confirm_report(report_id: str) -> None`, permissionless: the only way a non-first report reaches `"confirmed_original"`, gated on `status == "pending"`, no challenge currently open, and a new fixed `CHALLENGE_WINDOW_SECONDS` (72h) elapsed since submission.
+- New event `ReportConfirmed`.
+- 11 new regression tests (`TestNoImmunityAfterDistinct`, `TestConfirmReport`; 74 total, up from 63) directly reproducing the steward's described scenario -- survive `DISTINCT` against one baseline, then correctly get ruled `DUPLICATE` against a different one. Existing tests that asserted the old, incorrect immediate-confirmation behavior were corrected to match the verified-correct lifecycle.
+- `genvm-lint check`/`typecheck` clean after the fix; all docs (README.md, docs/DESIGN.md, PORTAL_SUBMISSION.md, FINAL_CHECKLIST.md) updated with the finding and the corrected lifecycle description.
+- Redeployed to GenLayer Bradbury testnet, superseding 1.0.0 -- see README.md for the new address and deploy tx.
+
 ## 1.0.0 -- initial build (2026-09-01)
 
 - `DisclosurePriorityGate` contract: `register_program`, `submit_report` (payable), `challenge_duplicate` (payable), `evaluate_challenge`, `reclaim_expired_challenge`, `claim_reward` (payable), `update_challenge_stake_requirement`; views `get_program`, `get_report`, `get_challenge`, `get_report_count`, `get_challenge_count`.
