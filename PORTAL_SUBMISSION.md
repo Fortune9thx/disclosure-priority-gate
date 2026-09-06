@@ -30,9 +30,11 @@ https://github.com/Fortune9thx/disclosure-priority-gate
 
 **Network:** GenLayer Bradbury Testnet
 
-**Contract address (1.1.0, current):** `<filled in after redeploy -- see docs/DESIGN.md#live-verification>`
+**Contract address (1.1.0, current):** [`0x6E4c3445bE1b2ae0EA4EC73FfDAB93Fc7a6dA2f4`](https://explorer-bradbury.genlayer.com/address/0x6E4c3445bE1b2ae0EA4EC73FfDAB93Fc7a6dA2f4)
 
-Supersedes 1.0.0 (`0x6688dA9243b0095827d60E528f38e0933f65904a`, deploy tx `0xdc8c3d0b57219675dbb2804b2c6a7a78c32c07681c410328322e0fe368e3cec9`, `ACCEPTED`/`AGREE`/`FINISHED_WITH_RETURN`, confirmed readable), redeployed after a GenLayer Portal steward's review of this contract's first submission found a real challenge-lifecycle gap -- see "Steward finding" below. A full `register_program` → `submit_report` (x2) → `challenge_duplicate` → `evaluate_challenge` sequence was run live end to end on 1.0.0, not just a bare deploy -- real, unscripted validator consensus correctly judged a deliberately paraphrased second report `DUPLICATE`, citing the actual shared root cause. That record still stands as proof of the consensus mechanism itself, unchanged by the 1.1.0 fix. Full record: `docs/DESIGN.md`'s "Live verification" section.
+Deploy tx `0xff062c79c252171c0a9ea4a873e1c37901e3d99f7964cda7dc5dfdd747a3cc45` -- `ACCEPTED`/`FINISHED_WITH_RETURN`, confirmed readable. Supersedes 1.0.0 (`0x6688dA9243b0095827d60E528f38e0933f65904a`, deploy tx `0xdc8c3d0b57219675dbb2804b2c6a7a78c32c07681c410328322e0fe368e3cec9`, `ACCEPTED`/`AGREE`/`FINISHED_WITH_RETURN`, confirmed readable), redeployed after a GenLayer Portal steward's review of this contract's first submission found a real challenge-lifecycle gap -- see "Steward finding" below.
+
+A real, live regression of the exact steward-described scenario was run against 1.1.0: `register_program` → `submit_report` (x2, two genuinely distinct issues) → `challenge_duplicate` → `evaluate_challenge`, all real signed transactions. Real, unscripted consensus judged `DISTINCT` with genuine reasoning ("the root causes and attack vectors... are fundamentally different"), and reading the report back afterward confirmed `"status": "pending"`, not `"confirmed_original"` -- live proof the fix holds. `confirm_report` was also confirmed live to correctly reject before the challenge window elapses. The 1.0.0 `DUPLICATE`-path live record (a deliberately paraphrased report correctly judged `DUPLICATE`) still stands as proof of the underlying consensus mechanism, unchanged by the 1.1.0 fix. Full record: `docs/DESIGN.md`'s "Live verification" section.
 
 ## Category / tags
 

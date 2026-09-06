@@ -8,7 +8,7 @@
 - New event `ReportConfirmed`.
 - 11 new regression tests (`TestNoImmunityAfterDistinct`, `TestConfirmReport`; 74 total, up from 63) directly reproducing the steward's described scenario -- survive `DISTINCT` against one baseline, then correctly get ruled `DUPLICATE` against a different one. Existing tests that asserted the old, incorrect immediate-confirmation behavior were corrected to match the verified-correct lifecycle.
 - `genvm-lint check`/`typecheck` clean after the fix; all docs (README.md, docs/DESIGN.md, PORTAL_SUBMISSION.md, FINAL_CHECKLIST.md) updated with the finding and the corrected lifecycle description.
-- Redeployed to GenLayer Bradbury testnet, superseding 1.0.0 -- see README.md for the new address and deploy tx.
+- Redeployed to GenLayer Bradbury testnet, superseding 1.0.0: `0x6E4c3445bE1b2ae0EA4EC73FfDAB93Fc7a6dA2f4`, deploy tx `0xff062c79c252171c0a9ea4a873e1c37901e3d99f7964cda7dc5dfdd747a3cc45` (`ACCEPTED`/`FINISHED_WITH_RETURN`). A real, live regression of the exact steward-described scenario ran against it: two genuinely distinct reports, a challenge, and a real unscripted `DISTINCT` verdict -- confirmed the report stayed `"pending"` afterward, not `"confirmed_original"`. See README.md and `docs/DESIGN.md#live-verification` for the full record.
 
 ## 1.0.0 -- initial build (2026-09-01)
 

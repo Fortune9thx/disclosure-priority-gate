@@ -127,9 +127,31 @@ Cloned and read three independently-accepted GenLayer Portal repos, specifically
 
 ## Live verification
 
-**Current (1.1.0, post-steward-fix): see the top of this section's replacement in README.md for the current deployed address and deploy tx** -- redeployed after the Steward review fix above (`confirm_report`, `DISTINCT` no longer auto-confirming). The DUPLICATE-path live record below (1.0.0) still stands as evidence the independent-re-derivation mechanism itself converges correctly on real Bradbury consensus, since `evaluate_challenge`'s `DUPLICATE` branch and the underlying `leader_fn`/`validator_fn` machinery are byte-for-byte unchanged by that fix -- only the `DISTINCT` branch's deterministic status-write logic changed, plus the new `confirm_report` method. See README.md for whether a fresh live run of the `DISTINCT`-then-`confirm_report` path was additionally performed against 1.1.0.
+### 1.1.0 (current, post-steward-fix)
 
-**1.0.0 (superseded, pre-steward-fix) record, kept for history:** deployed to GenLayer Bradbury testnet at `0x6688dA9243b0095827d60E528f38e0933f65904a`, deploy tx `0xdc8c3d0b57219675dbb2804b2c6a7a78c32c07681c410328322e0fe368e3cec9` (`ACCEPTED`/`AGREE`/`FINISHED_WITH_RETURN`), confirmed readable via a real `genlayer call get_report_count` returning `0`.
+Deployed to GenLayer Bradbury testnet at `0x6E4c3445bE1b2ae0EA4EC73FfDAB93Fc7a6dA2f4`, deploy tx `0xff062c79c252171c0a9ea4a873e1c37901e3d99f7964cda7dc5dfdd747a3cc45` (`ACCEPTED`/`FINISHED_WITH_RETURN`), confirmed readable via `get_report_count` returning `0`.
+
+A live regression of the exact scenario the steward described was then run, using the `bradbury-deploy` account for every call:
+
+1. `register_program("live-test-2", ...)`, `submit_report` x2 -- two genuinely distinct issues this time (a reentrancy bug for `report-0`, which auto-confirms as the program's first report; an unrelated integer-overflow bug for `report-1`, which starts `"pending"`), all `ACCEPTED`/`AGREE`.
+2. `confirm_report("report-1")` called **before** any challenge existed and before the window could possibly have elapsed -- correctly rejected (`txExecutionResultName: FINISHED_WITH_ERROR`), confirming the window/precondition gate is live and enforced, not just gltest-mocked.
+3. `challenge_duplicate("report-1", "report-0")` -- `ACCEPTED`/`AGREE`, all 5 validators voted `AGREE`.
+4. `evaluate_challenge("challenge-0")` -- `ACCEPTED`/`AGREE` (4 `AGREE` + 1 `TIMEOUT` vote, still reaching overall agreement -- validator-infrastructure latency, not disagreement). The genuinely unscripted model call correctly judged:
+
+   ```json
+   {
+     "verdict": "DISTINCT",
+     "reason": "REPORT A describes a reentrancy vulnerability where the order of operations (send before update) allows funds to be drained, while REPORT B describes an integer overflow vulnerability in a calculation that corrupts accounting. The root causes and attack vectors (reentrancy vs. arithmetic overflow) are fundamentally different."
+   }
+   ```
+
+5. **The critical check:** `get_report("report-1")` immediately afterward returned `"status": "pending"`, `"open_challenge_id": null` -- NOT `"confirmed_original"`. This is live, on real Bradbury consensus, proof that the fix holds: surviving this DISTINCT verdict did not confirm the report or grant it any immunity. It remains exactly as challengeable against a different baseline as it was before the challenge.
+
+**Disclosed honestly: the full window-elapse-then-confirm and the "DUPLICATE against a different baseline after surviving DISTINCT" paths were not additionally re-run live**, since GenVM's transaction-pinned clock cannot be time-warped on a real network the way `gltest`'s mock can -- proving those specific paths would require an actual 72-hour wait, which wasn't practical within this session. Both are fully covered deterministically by `TestConfirmReport` and `TestNoImmunityAfterDistinct` in the test suite (74/74 passing), and the live run above proves the one part that genuinely cannot be simulated: that a real, unscripted model call reaches the correct verdict and that the deterministic status-write logic around it behaves exactly as the fix requires on real infrastructure.
+
+### 1.0.0 (superseded, pre-steward-fix, kept for history)
+
+Deployed to GenLayer Bradbury testnet at `0x6688dA9243b0095827d60E528f38e0933f65904a`, deploy tx `0xdc8c3d0b57219675dbb2804b2c6a7a78c32c07681c410328322e0fe368e3cec9` (`ACCEPTED`/`AGREE`/`FINISHED_WITH_RETURN`), confirmed readable via a real `genlayer call get_report_count` returning `0`.
 
 A full, real transaction sequence was then run end to end against this deployment, using the `bradbury-deploy` account (`0xc6e6d3b2accaececeb40ad4bd3df123ddcb4e537`) for every call:
 
